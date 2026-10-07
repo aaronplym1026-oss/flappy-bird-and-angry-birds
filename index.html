@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Flappy Angry Birds</title>
+<style>
+html,body{margin:0;height:100%;background:#222;display:flex;align-items:center;justify-content:center;font-family:sans-serif}
+canvas{background:#70c5ce;max-height:100vh;max-width:100vw;touch-action:none}
+</style></head><body>
+<canvas id="c" width="400" height="600"></canvas>
+<script>
+// Controls: Space / click / tap = flap, X / Shift / right-click / tap the ability button = ability.
+// In menu: Left/Right (or tap arrows) to choose an unlocked bird, Space/click to start.
+const UNLOCK_EVERY = 15;
+const BIRDS = [
+  {name:'Red',color:'#d62828',ability:'Battle Cry',desc:'Slows the pipes for 3s',dur:3,cd:8},
+  {name:'Chuck',color:'#ffd60a',ability:'Speed Dash',desc:'Dash through pipes for 1s',dur:1,cd:8},
+  {name:'Blues',color:'#4cc9f0',ability:'Shrink',desc:'Tiny hitbox for 3s',dur:3,cd:8},
+  {name:'Bomb',color:'#222',ability:'Explode',desc:'Blow up the next pipes',dur:0.3,cd:10},
+  {name:'Matilda',color:'#f8f9fa',ability:'Float',desc:'Light gravity for 3s',dur:3,cd:8},
+  {name:'Terence',color:'#9d0208',ability:'Smash',desc:'Big & unstoppable for 2s',dur:2,cd:10},
+  {name:'Silver',color:'#adb5bd',ability:'Loop',desc:'Loop up + brief shield',dur:0.8,cd:8},
+];
+const W=400,H=600,GAP=150,PW=60,R=14,BX=100;
+const cv=document.getElementById('c'),g=cv.getContext('2d');
+let best=+localStorage.getItem('fabBest')||0, sel=0;
+let state='menu', bird, pipes, score, speed, spawn, active, cool, activeT, t0, frame=0;
+const unlockedCount=()=>Math.min(BIRDS.length,1+Math.floor(best/UNLOCK_EVERY));
+
+function start(){
+  state='play';bird={y:H/2,v:0,r:R};pipes=[];score=0;speed=2.2;spawn=0;
+  active=false;activeT=0;cool=0;
+}
+function flap(){
+  if(state==='menu')return start();
+  if(state==='over'){if(performance.now()-t0>400)state='menu';return}
+  bird.v=-6.2;
+}
+function ability(){
+  if(state!=='play'||cool>0)return;
+  const b=BIRDS[sel];active=true;activeT=b.dur;cool=b.cd;
+  if(b.name==='Bomb'){
+    const p=pipes.find(p=>p.x+PW>BX-R);
+    if(p){p.dead=true;score++;checkUnlock()}
+  }
+  if(b.name==='Silver')bird.v=-9;
+}
+function checkUnlock(){
+  if(score>best){best=score;localStorage.setItem('fabBest',best)}
+}
+function die(){state='over';t0=performance.now();checkUnlock()}
+
+function update(){
+  if(state!=='play')return;
+  const b=BIRDS[sel];
+  if(cool>0)cool-=1/60;
+  if(active){activeT-=1/60;if(activeT<=0)active=false}
+  let sp=speed,grav=0.35,r=R;
+  if(active){
+    if(b.name==='Red')sp*=0.4;
+    if(b.name==='Chuck')sp*=2.5;
+    if(b.name==='Blues')r=7;
+    if(b.name==='Matilda')grav=0.12;
+    if(b.name==='Terence')r=22;
+  }
+  bird.r=r;
+  bird.v=Math.min(bird.v+grav,active&&b.name==='Matilda'?3:9);
+  bird.y+=bird.v;
+  if(--spawn<=0){
+    pipes.push({x:W,top:60+Math.random()*(H-GAP-120),passed:false});
+    spawn=Math.round(190/speed);
+  }
+  const invincible=active&&(b.name==='Chuck'||b.name==='Terence'||b.name==='Silver');
+  for(const p of pipes){
+    p.x-=sp;
+    if(!p.dead&&bird.r+BX>p.x&&BX-bird.r<p.x+PW&&!invincible){
+      if(bird.y-bird.r<p.top||bird.y+bird.r>p.top+GAP)return die();
+    }
+    if(!p.passed&&p.x+PW<BX){p.passed=true;if(!p.dead){score++;checkUnlock()}}
+  }
+  pipes=pipes.filter(p=>p.x>-PW);
+  speed=2.2+Math.min(score,60)*0.01;
+  if(bird.y+bird.r>H-40)return die();
+  if(bird.y<bird.r)bird.y=bird.r,bird.v=0;
+}
+function drawBird(x,y,i,r,rot=0){
+  const b=BIRDS[i];
+  g.save();g.translate(x,y);g.rotate(rot);
+  g.fillStyle=b.color;g.beginPath();g.arc(0,0,r,0,7);g.fill();
+  g.strokeStyle='#000';g.lineWidth=1.5;g.stroke();
+  g.fillStyle='#fff';g.beginPath();g.arc(r*.3,-r*.25,r*.3,0,7);g.arc(r*.75,-r*.25,r*.3,0,7);g.fill();
+  g.fillStyle='#000';g.fillRect(r*.3,-r*.45,r*.15,r*.2);g.fillRect(r*.75,-r*.45,r*.15,r*.2);
+  g.fillStyle='#ff9f1c';g.beginPath();g.moveTo(r*.5,0);g.lineTo(r*1.3,r*.2);g.lineTo(r*.5,r*.5);g.fill();
+  g.fillStyle='#000';g.fillRect(r*.1,-r*.7,r*.9,r*.15);
+  g.restore();
+}
+function text(s,x,y,sz,al='center',col='#fff'){
+  g.font='bold '+sz+'px sans-serif';g.textAlign=al;g.lineWidth=4;g.strokeStyle='#000';
+  g.strokeText(s,x,y);g.fillStyle=col;g.fillText(s,x,y);
+}
+function draw(){
+  g.fillStyle='#70c5ce';g.fillRect(0,0,W,H);
+  for(const p of pipes){
+    if(p.dead){g.fillStyle='rgba(255,140,0,.6)';g.fillRect(p.x-10,p.top-20,PW+20,GAP+40);continue}
+    g.fillStyle='#4caf50';g.strokeStyle='#1b5e20';g.lineWidth=3;
+    g.fillRect(p.x,0,PW,p.top);g.strokeRect(p.x,0,PW,p.top);
+    g.fillRect(p.x,p.top+GAP,PW,H);g.strokeRect(p.x,p.top+GAP,PW,H);
+  }
+  g.fillStyle='#ded895';g.fillRect(0,H-40,W,40);
+  if(state==='menu'){
+    text('FLAPPY ANGRY BIRDS',W/2,70,28);
+    const n=unlockedCount(),b=BIRDS[sel];
+    drawBird(W/2,200,sel,40,Math.sin(frame/20)*.1);
+    text('◀',60,210,36);text('▶',W-60,210,36);
+    text(b.name,W/2,290,30);
+    text(b.ability+': '+b.desc,W/2,325,15);
+    text('Best: '+best+'  Unlocked: '+n+'/'+BIRDS.length,W/2,370,18);
+    BIRDS.forEach((bb,i)=>{
+      const x=W/2+(i-(BIRDS.length-1)/2)*48;
+      g.globalAlpha=i<n?1:.35;drawBird(x,420,i,16);g.globalAlpha=1;
+      if(i>=n)text('🔒',x-8,426,16,'left');
+    });
+    if(n<BIRDS.length)text('Next bird at '+n*UNLOCK_EVERY+' pipes',W/2,470,16);
+    text('Tap / Space to start',W/2,530,22);
+    text('Flap: Space/click  Ability: X/Shift/right-click',W/2,565,12);
+  }else{
+    drawBird(BX,bird.y,sel,bird.r,Math.min(bird.v/10,1)*.8+(active&&BIRDS[sel].name==='Silver'?activeT*8:0));
+    if(active&&BIRDS[sel].name!=='Bomb'){g.strokeStyle='#fff';g.lineWidth=2;g.beginPath();g.arc(BX,bird.y,bird.r+5,0,7);g.stroke()}
+    text(score,W/2,70,44);
+    const ready=cool<=0;
+    g.fillStyle=ready?'#d62828':'#555';g.beginPath();g.arc(W-45,H-90,28,0,7);g.fill();
+    text(ready?'X':Math.ceil(cool),W-45,H-82,22);
+    text(BIRDS[sel].ability,W-45,H-50,11);
+    if(state==='over'){
+      g.fillStyle='rgba(0,0,0,.5)';g.fillRect(0,0,W,H);
+      text('Game Over',W/2,240,40);text('Score '+score+'   Best '+best,W/2,290,22);
+      text('Tap to continue',W/2,350,20);
+    }
+  }
+}
+function loop(){frame++;update();draw();requestAnimationFrame(loop)}
+function menuNav(d){const n=unlockedCount();sel=(sel+d+n)%n}
+addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();if(!e.repeat)flap()}
+  else if(e.code==='KeyX'||e.code==='ShiftLeft'||e.code==='ShiftRight')ability();
+  else if(state==='menu'&&e.code==='ArrowLeft')menuNav(-1);
+  else if(state==='menu'&&e.code==='ArrowRight')menuNav(1);
+});
+cv.addEventListener('contextmenu',e=>{e.preventDefault();ability()});
+cv.addEventListener('pointerdown',e=>{
+  if(e.button===2)return;
+  const r=cv.getBoundingClientRect(),x=(e.clientX-r.left)*W/r.width,y=(e.clientY-r.top)*H/r.height;
+  if(state==='menu'&&y>150&&y<260&&(x<110||x>W-110))return menuNav(x<110?-1:1);
+  if(state==='play'&&Math.hypot(x-(W-45),y-(H-90))<35)return ability();
+  flap();
+});
+if(unlockedCount()<=sel)sel=0;
+loop();
+</script></body></html>
