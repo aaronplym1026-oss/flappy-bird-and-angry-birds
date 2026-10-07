@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
@@ -156,3 +157,31 @@ cv.addEventListener('pointerdown',e=>{
 if(unlockedCount()<=sel)sel=0;
 loop();
 </script></body></html>
+=======
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Flappy Angry Birds</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #1d2433; }
+    body { display: flex; align-items: center; justify-content: center; }
+    canvas {
+      width: min(100vw, calc(100vh * 16 / 9));
+      aspect-ratio: 16 / 9;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game" width="960" height="540"></canvas>
+  <script src="src/core.js"></script>
+  <script src="src/levels.js"></script>
+  <script src="src/game.js"></script>
+</body>
+</html>
+>>>>>>> origin/main
