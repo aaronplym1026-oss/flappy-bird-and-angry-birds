@@ -22,6 +22,16 @@ The server creates its tables on startup.
 | `PORT`         | Port to listen on (Render sets this automatically)         |
 | `PGSSLMODE`    | Optional; `require` is used automatically for Render hosts |
 
+## Installing as an app
+
+The site is an installable web app: `public/manifest.webmanifest` and the icons in
+`public/icons/` let phones and computers add it to the home screen, and `public/sw.js`
+keeps a copy of the game so the app opens offline. Account requests (`/api/`) are never
+cached. The server stamps `sw.js` with the page version, so every deploy updates installed apps.
+
+- Android / desktop Chrome or Edge: the in-game **GET APP** button opens the install prompt.
+- iPhone / iPad: **GET APP** shows the Share → Add to Home Screen steps.
+
 ## Accounts
 
 - Usernames: 3–20 letters, numbers or underscores. Passwords: 8+ characters.

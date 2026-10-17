@@ -3,6 +3,17 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="description" content="Monster Pop TD: an 8-bit monster tower defense game. Pop balloons with original monsters and save your progress to your account.">
+<meta name="theme-color" content="#14121f">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Monster Pop">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="application-name" content="Monster Pop">
 <title>Monster Pop TD</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
@@ -10,8 +21,11 @@
 :root{--bezel:#14121f;--ink:#e8e4f4;color-scheme:dark}
 html{height:100%;box-sizing:border-box}
 body{height:100%;box-sizing:border-box;margin:0;overflow:hidden;background:var(--bezel);color:var(--ink);
-  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:6px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-top:max(6px,env(safe-area-inset-top,0px));padding-bottom:max(6px,env(safe-area-inset-bottom,0px));
   display:flex;flex-direction:column}
+/* installed as an app: no browser around it, so use the whole screen (minus notches) */
+@media (display-mode:fullscreen),(display-mode:standalone){body{padding-left:max(2px,env(safe-area-inset-left,0px));padding-right:max(2px,env(safe-area-inset-right,0px))}}
 #cv{display:block;flex:1;width:100%;min-height:0;touch-action:none;image-rendering:pixelated;image-rendering:crisp-edges;
   -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent;outline:none}
 #cv:focus-visible{outline:2px solid #f2c94c;outline-offset:2px}
@@ -29,6 +43,9 @@ body{height:100%;box-sizing:border-box;margin:0;overflow:hidden;background:var(-
 #codebox input:focus,#codebox textarea:focus{outline:none;border-color:#f2c94c}
 #codebox button:disabled{opacity:.55;cursor:wait}
 #codebox .links{display:flex;gap:12px;flex-wrap:wrap;margin-top:10px}
+#codebox ol.steps{margin:0 0 8px;padding-left:22px;color:#fbf8f0;font-size:13px}
+#codebox ol.steps li{margin:4px 0}
+#codebox p.note{color:#f8e060;font-size:12px}
 #codebox button.link{flex:none;min-width:0;background:none;box-shadow:none;padding:2px 0;color:#88d8ff;text-decoration:underline;font-weight:normal}
 </style>
 </head>
@@ -3596,7 +3613,13 @@ const Acct = {
     return j;
   },
   async boot() {
-    if (!this.on) return; this.state = 'checking';
+    if (!this.on) return;
+    if (!this.listening) { // an installed app can open offline and stay open: reconnect when the network is back
+      this.listening = true;
+      addEventListener('online', () => this.retry(true));
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') this.retry(false); });
+    }
+    this.lastTry = Date.now(); this.state = 'checking';
     try { const j = await this.api('GET', '/api/me'); if (j && j.user) { this.user = j.user.name; this.state = 'in'; await this.pull(false); } else this.state = 'guest'; }
     catch (e) { this.state = 'offline'; }
   },
@@ -3623,7 +3646,11 @@ const Acct = {
     await this.push(true); return 'uploaded';
   },
   dirty() { if (this.state === 'in') this.pending = true; },
-  tick() { if (this.pending && !this.busy && this.state === 'in' && Date.now() - this.lastPush > 6000) this.push(); },
+  retry(now) { if (this.state === 'offline' && !this.busy && (now || Date.now() - (this.lastTry || 0) > 5000)) this.boot(); },
+  tick() {
+    if (this.pending && !this.busy && this.state === 'in' && Date.now() - this.lastPush > 6000) this.push();
+    if (this.state === 'offline' && Date.now() - (this.lastTry || 0) > 30000) this.retry(true);
+  },
   async push(all, keep) {
     if (this.state !== 'in') return; this.busy = true; this.pending = false; this.lastPush = Date.now();
     try {
@@ -3748,6 +3775,59 @@ const AuthUI = {
   remove() {
     this.open('DELETE ACCOUNT?', 'This deletes your account and its saved progress for good. Progress on this device stays.', [{ name: 'p', label: 'TYPE YOUR PASSWORD TO CONFIRM', type: 'password', ac: 'current-password', max: 100 }],
       [{ label: 'DELETE', cls: 'stop', fn: () => this.run(async () => { await Acct.deleteAccount(this.val('p')); this.done('ACCOUNT DELETED.'); }) }, { label: 'CANCEL', fn: () => codeBox.close() }]);
+  }
+};
+/* ============================================================
+   APP  -  install to the home screen + offline play
+   Only in the server build (window.MPTD_SERVER): the page has a
+   manifest, icons and a service worker there.
+   ============================================================ */
+const AppInstall = {
+  on: !!window.MPTD_SERVER, prompt: null, done: false, standalone: false, ios: false, android: false,
+  init() {
+    if (!this.on) return;
+    try { this.standalone = matchMedia('(display-mode: fullscreen)').matches || matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch (e) { }
+    const ua = navigator.userAgent || '';
+    this.ios = /iPad|iPhone|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    this.android = /Android/i.test(ua);
+    addEventListener('beforeinstallprompt', e => { e.preventDefault(); this.prompt = e; });
+    addEventListener('appinstalled', () => { this.prompt = null; this.done = true; UI.flash = { t: 4, s: 'INSTALLED! OPEN IT FROM YOUR HOME SCREEN.' }; });
+    const secure = location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    if ('serviceWorker' in navigator && secure) {
+      const reg = () => navigator.serviceWorker.register('/sw.js').catch(() => { });
+      if (document.readyState === 'complete') reg(); else addEventListener('load', reg);
+    }
+  },
+  /* show the GET APP button? Browsers that can install directly hand us a prompt;
+     iPhone/iPad and other Android browsers get short how-to steps instead. */
+  canOffer() { return this.on && !this.standalone && !this.done && (!!this.prompt || this.ios || this.android); },
+  async offer() {
+    if (this.prompt) {
+      const p = this.prompt; this.prompt = null;
+      try { await p.prompt(); const r = await p.userChoice; if (r && r.outcome === 'accepted') this.done = true; } catch (e) { }
+      return;
+    }
+    this.howTo();
+  },
+  howTo() {
+    const steps = this.ios ? [
+      'Open this page in Safari.',
+      'Tap the Share button (the square with an arrow pointing up).',
+      'Scroll down and tap "Add to Home Screen", then tap "Add".'
+    ] : [
+      'Open the browser menu (the three dots).',
+      'Tap "Install app" or "Add to Home screen".',
+      'Tap "Install" or "Add".'
+    ];
+    const note = this.ios ? 'The app keeps its own save on iPhone and iPad, so log in to your account first. Your progress will be waiting inside the app.' : 'Log in to your account so your progress is in the app too.';
+    const d = codeBox.build(), cb = d.querySelector('.cb');
+    cb.innerHTML = '<h2>GET THE APP</h2><p>Monster Pop goes on your home screen, opens full screen and works offline.</p><ol class="steps"></ol><p class="note"></p><div class="row"></div>';
+    const ol = cb.querySelector('ol'); for (const s of steps) { const li = document.createElement('li'); li.textContent = s; ol.appendChild(li); }
+    cb.querySelector('.note').textContent = note;
+    const row = cb.querySelector('.row');
+    if (Acct.on && !Acct.user) { const b = document.createElement('button'); b.textContent = 'LOG IN FIRST'; b.onclick = () => AuthUI.login(); row.appendChild(b); }
+    const ok = document.createElement('button'); ok.className = 'go'; ok.textContent = 'GOT IT'; ok.onclick = () => codeBox.close(); row.appendChild(ok);
+    d.style.display = 'flex'; codeBox.open = true; setTimeout(() => { try { ok.focus(); } catch (e) { } }, 30);
   }
 };
 /* ============================================================
@@ -4181,7 +4261,8 @@ function drawTitle(dt) {
   mmBadge(L.uw - 4, 4);
   { const dt2 = dexTotals(), lab = 'DEX ' + dt2.n + '/' + dt2.all, w = textW(lab) + 8; button('t_dex', 4, 3, w, 13, lab, () => { UI.screen = 'dex'; UI.dexSel = null; }, { color: UIC.redDk, hi: UIC.red });
     const al = Acct.on ? (Acct.user ? Acct.user.toUpperCase() : 'LOG IN') : 'SAVES', aw = Math.max(w, textW(al) + 8);
-    button('t_saves', 4, 18, aw, 13, al, () => { if (Acct.on && Acct.state === 'guest') AuthUI.login(); else UI.screen = 'saves'; }, Acct.on && !Acct.user ? { color: UIC.goldDk, hi: UIC.gold } : {}); }
+    button('t_saves', 4, 18, aw, 13, al, () => { if (Acct.on && Acct.state === 'guest') AuthUI.login(); else UI.screen = 'saves'; }, Acct.on && !Acct.user ? { color: UIC.goldDk, hi: UIC.gold } : {});
+    if (AppInstall.canOffer()) button('t_app', 4, 33, Math.max(aw, textW('GET APP') + 8), 13, 'GET APP', () => AppInstall.offer(), GO); }
   drawTextO(ctx, 'MONSTER', cx, y, UIC.gold, sc, 'c'); y += 9 * sc;
   drawTextO(ctx, 'POP TD', cx, y, UIC.white, sc, 'c'); y += 9 * sc + 4;
   drawTextO(ctx, '8-BIT BALLOON DEFENSE', cx, y, UIC.sky, 1, 'c'); y += 16;
@@ -4648,7 +4729,7 @@ function loop(now) {
 function boot() {
   buildMonsterSprites(); buildMiscSprites(); buildHeroSprites();
   MAPDATA = MAPS.map(buildMap);
-  Meta.boot(); Save.boot(); Acct.boot();
+  Meta.boot(); Save.boot(); Acct.boot(); AppInstall.init();
   const hot = window.claude?.hot;
   try { if (hot && typeof hot.snapshot === 'function') hot.snapshot(() => ({ save: UI.screen === 'play' && G && !G.over ? serializeGame() : null, screen: UI.screen, selMap: UI.selMap, selDiff: UI.selDiff })); } catch (e) { }
   const start = data => {

@@ -189,13 +189,28 @@ async function api(req, res, route) {
   return fail(res, 404, 'Not found.');
 }
 
-/* ---------------- static game page ---------------- */
-const PAGE = fs.readFileSync(path.join(__dirname, 'public', 'index.html')), PAGE_GZ = zlib.gzipSync(PAGE, { level: 9 }), PAGE_TAG = '"' + sha(PAGE).slice(0, 16) + '"';
+/* ---------------- static files: the game page and its app files ---------------- */
 const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; media-src 'self' data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
-function page(req, res) {
-  if (req.headers['if-none-match'] === PAGE_TAG) { res.writeHead(304, { ETag: PAGE_TAG }); return res.end(); }
-  const gz = /\bgzip\b/.test(req.headers['accept-encoding'] || ''), body = gz ? PAGE_GZ : PAGE;
-  res.writeHead(200, Object.assign({ 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': body.length, 'Cache-Control': 'no-cache', ETag: PAGE_TAG, 'Content-Security-Policy': CSP, Vary: 'Accept-Encoding' }, gz ? { 'Content-Encoding': 'gzip' } : {}));
+function asset(file, type, cache, extra, edit) {
+  let body = fs.readFileSync(path.join(__dirname, 'public', file)); if (edit) body = Buffer.from(edit(body.toString('utf8')));
+  const zip = /^(text|application)\//.test(type), gz = zip ? zlib.gzipSync(body, { level: 9 }) : null;
+  return { body, gz, type, cache, extra: extra || {}, tag: '"' + sha(body).slice(0, 16) + '"' };
+}
+const PAGE = asset('index.html', 'text/html; charset=utf-8', 'no-cache', { 'Content-Security-Policy': CSP });
+const BUILD = PAGE.tag.slice(1, 13);
+const ICON = f => asset('icons/' + f, 'image/png', 'public, max-age=604800');
+const FILES = {
+  '/': PAGE, '/index.html': PAGE,
+  '/manifest.webmanifest': asset('manifest.webmanifest', 'application/manifest+json', 'public, max-age=3600'),
+  '/sw.js': asset('sw.js', 'text/javascript; charset=utf-8', 'no-cache', null, s => s.replace('__BUILD__', BUILD)),
+  '/icons/icon-192.png': ICON('icon-192.png'), '/icons/icon-512.png': ICON('icon-512.png'), '/icons/maskable-512.png': ICON('maskable-512.png'),
+  '/icons/apple-touch-icon.png': ICON('apple-touch-icon.png'), '/apple-touch-icon.png': ICON('apple-touch-icon.png'),
+  '/icons/favicon-32.png': ICON('favicon-32.png'), '/favicon.ico': ICON('favicon-32.png')
+};
+function sendAsset(req, res, a) {
+  if (req.headers['if-none-match'] === a.tag) { res.writeHead(304, { ETag: a.tag, 'Cache-Control': a.cache }); return res.end(); }
+  const gz = a.gz && /\bgzip\b/.test(req.headers['accept-encoding'] || ''), body = gz ? a.gz : a.body;
+  res.writeHead(200, Object.assign({ 'Content-Type': a.type, 'Content-Length': body.length, 'Cache-Control': a.cache, ETag: a.tag }, a.gz ? { Vary: 'Accept-Encoding' } : {}, gz ? { 'Content-Encoding': 'gzip' } : {}, a.extra));
   res.end(req.method === 'HEAD' ? undefined : body);
 }
 
@@ -205,7 +220,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (url.startsWith('/api/')) return dbReady ? await api(req, res, url.slice(5)) : fail(res, 503, 'Accounts are offline right now.');
     if (url === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
-    if ((req.method === 'GET' || req.method === 'HEAD') && (url === '/' || url === '/index.html')) return page(req, res);
+    if ((req.method === 'GET' || req.method === 'HEAD') && Object.prototype.hasOwnProperty.call(FILES, url)) return sendAsset(req, res, FILES[url]);
     res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Not found');
   } catch (e) {
     if (e.status) return fail(res, e.status, e.status === 413 ? 'Too big.' : 'Bad request.');
