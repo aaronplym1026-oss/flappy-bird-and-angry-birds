@@ -14,7 +14,11 @@ function cleanUrl(raw) {
 }
 function parseUrl(raw) {
   const url = cleanUrl(raw);
-  if (!/^postgresql:\/\//i.test(url)) throw new Error('DATABASE_URL must start with postgresql:// (paste the Internal Database URL)');
+  if (!/^postgresql:\/\//i.test(url)) {
+    // Say what it looks like instead (only the part before the first ":", never the rest).
+    const m = /^([A-Za-z][A-Za-z0-9+.\-_]{0,60}):/.exec(url);
+    throw new Error('DATABASE_URL must start with postgresql:// (paste the Internal Database URL); the saved value is ' + url.length + ' characters' + (m ? ' and starts with "' + m[1] + ':"' : ''));
+  }
   let u; try { u = new URL(url); } catch (e) { throw new Error('DATABASE_URL is not a valid connection string'); }
   if (!u.hostname) throw new Error('DATABASE_URL has no host name in it');
   const ssl = (u.searchParams.get('sslmode') || process.env.PGSSLMODE || (/\.render\.com$/.test(u.hostname) ? 'require' : 'disable')).toLowerCase();
