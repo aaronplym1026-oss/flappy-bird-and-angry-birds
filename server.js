@@ -1,13 +1,13 @@
 'use strict';
 /* Monster Pop TD server: serves the game and keeps player accounts + saves.
    No npm dependencies: Node's own http, crypto and zlib, plus pg-lite.js.
-   Env: DATABASE_URL (required), PORT (Render sets it). */
+   Env: DATABASE_URL (needed for accounts), PORT (Render sets it).
+   Without DATABASE_URL the game is still served, but accounts are offline. */
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto'), zlib = require('zlib');
 const { PgPool } = require('./pg-lite');
 
 const PORT = +process.env.PORT || 3000;
-if (!process.env.DATABASE_URL) { console.error('DATABASE_URL is not set'); process.exit(1); }
-const db = new PgPool(process.env.DATABASE_URL, { max: 5 });
+const db = process.env.DATABASE_URL ? new PgPool(process.env.DATABASE_URL, { max: 5 }) : null;
 
 const SESSION_DAYS = 60, MAX_SAVE = 600 * 1024, MAX_BODY = 700 * 1024;
 const USER_RE = /^[A-Za-z0-9_]{3,20}$/;
@@ -195,7 +195,7 @@ const server = http.createServer(async (req, res) => {
   baseHeaders(req, res);
   const url = req.url.split('?')[0];
   try {
-    if (url.startsWith('/api/')) return await api(req, res, url.slice(5));
+    if (url.startsWith('/api/')) return db ? await api(req, res, url.slice(5)) : fail(res, 503, 'Accounts are offline right now.');
     if (url === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
     if ((req.method === 'GET' || req.method === 'HEAD') && (url === '/' || url === '/index.html')) return page(req, res);
     res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Not found');
@@ -206,7 +206,10 @@ const server = http.createServer(async (req, res) => {
 });
 server.headersTimeout = 20000; server.requestTimeout = 30000;
 
-migrate().then(() => {
+if (!db) {
+  console.warn('DATABASE_URL is not set: serving the game with accounts offline');
+  server.listen(PORT, () => console.log('Monster Pop TD listening on ' + PORT + ' (no database)'));
+} else migrate().then(() => {
   setInterval(() => db.query('DELETE FROM sessions WHERE expires_at < now()').catch(e => console.error(e)), 3600e3).unref();
   server.listen(PORT, () => console.log('Monster Pop TD listening on ' + PORT));
 }).catch(e => { console.error('could not set up the database', e); process.exit(1); });

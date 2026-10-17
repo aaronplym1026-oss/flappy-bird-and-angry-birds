@@ -18,7 +18,7 @@ The server creates its tables on startup.
 
 | Env var        | Meaning                                                    |
 | -------------- | ---------------------------------------------------------- |
-| `DATABASE_URL` | Postgres connection string (required)                      |
+| `DATABASE_URL` | Postgres connection string (without it, accounts are offline) |
 | `PORT`         | Port to listen on (Render sets this automatically)         |
 | `PGSSLMODE`    | Optional; `require` is used automatically for Render hosts |
 
