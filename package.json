@@ -4,7 +4,7 @@
   "private": true,
   "description": "Monster Pop TD with player accounts and cloud saves",
   "main": "server.js",
-  "engines": { "node": ">=18" },
+  "engines": { "node": "22.x" },
   "scripts": { "start": "node server.js" },
   "dependencies": {}
 }
