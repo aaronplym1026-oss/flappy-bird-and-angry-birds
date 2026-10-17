@@ -2,12 +2,18 @@
 /* Monster Pop TD server: serves the game and keeps player accounts + saves.
    No npm dependencies: Node's own http, crypto and zlib, plus pg-lite.js.
    Env: DATABASE_URL (needed for accounts), PORT (Render sets it).
-   Without DATABASE_URL the game is still served, but accounts are offline. */
+   Without a working database the game is still served, but accounts are
+   offline (the API answers 503) until the database can be reached. */
 const http = require('http'), fs = require('fs'), path = require('path'), crypto = require('crypto'), zlib = require('zlib');
-const { PgPool } = require('./pg-lite');
+const { PgPool, describeUrl } = require('./pg-lite');
 
 const PORT = +process.env.PORT || 3000;
-const db = process.env.DATABASE_URL ? new PgPool(process.env.DATABASE_URL, { max: 5 }) : null;
+let db = null, dbReady = false;
+if (process.env.DATABASE_URL) {
+  try { console.log('database: ' + describeUrl(process.env.DATABASE_URL)); db = new PgPool(process.env.DATABASE_URL, { max: 5 }); }
+  catch (e) { console.error('DATABASE_URL problem: ' + e.message + '. Accounts are offline until it is fixed.'); }
+}
+const errText = e => e.message || e.code || (e.errors && e.errors.map(x => x.message).join('; ')) || String(e);
 
 const SESSION_DAYS = 60, MAX_SAVE = 600 * 1024, MAX_BODY = 700 * 1024;
 const USER_RE = /^[A-Za-z0-9_]{3,20}$/;
@@ -19,10 +25,12 @@ const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS sessions_user ON sessions(user_id)`,
   `CREATE TABLE IF NOT EXISTS saves (user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, data TEXT NOT NULL, ts BIGINT NOT NULL DEFAULT 0, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())`
 ];
+/* Keeps trying (backing off to once a minute) so a database that is briefly
+   down, or still being set up, never takes the game offline. */
 async function migrate() {
   for (let i = 0; ; i++) {
-    try { for (const s of SCHEMA) await db.query(s); return; }
-    catch (e) { if (i >= 30) throw e; console.log('database not ready (' + e.message + '), retrying'); await new Promise(r => setTimeout(r, 2000)); }
+    try { for (const s of SCHEMA) await db.query(s); dbReady = true; console.log('database ready, accounts are online'); return; }
+    catch (e) { console.log('database not ready (' + errText(e) + '), retrying'); await new Promise(r => setTimeout(r, Math.min(60000, 2000 * (i + 1)))); }
   }
 }
 
@@ -195,7 +203,7 @@ const server = http.createServer(async (req, res) => {
   baseHeaders(req, res);
   const url = req.url.split('?')[0];
   try {
-    if (url.startsWith('/api/')) return db ? await api(req, res, url.slice(5)) : fail(res, 503, 'Accounts are offline right now.');
+    if (url.startsWith('/api/')) return dbReady ? await api(req, res, url.slice(5)) : fail(res, 503, 'Accounts are offline right now.');
     if (url === '/healthz') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('ok'); }
     if ((req.method === 'GET' || req.method === 'HEAD') && (url === '/' || url === '/index.html')) return page(req, res);
     res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Not found');
@@ -206,10 +214,7 @@ const server = http.createServer(async (req, res) => {
 });
 server.headersTimeout = 20000; server.requestTimeout = 30000;
 
-if (!db) {
-  console.warn('DATABASE_URL is not set: serving the game with accounts offline');
-  server.listen(PORT, () => console.log('Monster Pop TD listening on ' + PORT + ' (no database)'));
-} else migrate().then(() => {
-  setInterval(() => db.query('DELETE FROM sessions WHERE expires_at < now()').catch(e => console.error(e)), 3600e3).unref();
-  server.listen(PORT, () => console.log('Monster Pop TD listening on ' + PORT));
-}).catch(e => { console.error('could not set up the database', e); process.exit(1); });
+server.listen(PORT, () => console.log('Monster Pop TD listening on ' + PORT + (db ? '' : ' (no database, accounts offline)')));
+if (db) migrate().then(() => {
+  setInterval(() => db.query('DELETE FROM sessions WHERE expires_at < now()').catch(e => console.error(errText(e))), 3600e3).unref();
+});

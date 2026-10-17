@@ -5,8 +5,18 @@
    TLS, and a tiny connection pool. */
 const net = require('net'), tls = require('tls'), crypto = require('crypto');
 
-function parseUrl(url) {
-  const u = new URL(url);
+/* Forgive the usual copy/paste slips: spaces, quotes, a "DATABASE_URL=" prefix,
+   or a missing slash after the scheme. */
+function cleanUrl(raw) {
+  let s = String(raw || '').trim().replace(/^DATABASE_URL\s*=\s*/i, '').trim().replace(/^["'`]+|["'`]+$/g, '').trim();
+  s = s.replace(/^postgres(ql)?:\/*/i, 'postgresql://');
+  return s;
+}
+function parseUrl(raw) {
+  const url = cleanUrl(raw);
+  if (!/^postgresql:\/\//i.test(url)) throw new Error('DATABASE_URL must start with postgresql:// (paste the Internal Database URL)');
+  let u; try { u = new URL(url); } catch (e) { throw new Error('DATABASE_URL is not a valid connection string'); }
+  if (!u.hostname) throw new Error('DATABASE_URL has no host name in it');
   const ssl = (u.searchParams.get('sslmode') || process.env.PGSSLMODE || (/\.render\.com$/.test(u.hostname) ? 'require' : 'disable')).toLowerCase();
   return {
     host: u.hostname, port: +u.port || 5432, user: decodeURIComponent(u.username), password: decodeURIComponent(u.password),
@@ -139,4 +149,9 @@ class PgPool {
   }
   async end() { for (const c of this.idle.splice(0)) c.end(); }
 }
-module.exports = { PgPool, PgError };
+/* Where a URL points, for logs. Never includes the password. */
+function describeUrl(raw) {
+  const c = parseUrl(raw);
+  return 'host=' + c.host + ' port=' + c.port + ' db=' + c.database + ' user=' + c.user + ' ssl=' + (c.ssl || 'off') + ' password=' + (c.password ? 'set' : 'MISSING');
+}
+module.exports = { PgPool, PgError, describeUrl };
